@@ -330,6 +330,25 @@
   ::-webkit-scrollbar { width: 6px; }
   ::-webkit-scrollbar-track { background: var(--shadow-dark); }
   ::-webkit-scrollbar-thumb { background: var(--gold-dim); border-radius: 3px; }
+
+  /* TOGGLE */
+  .toggle-wrap {
+    display: flex; align-items: center; gap: 10px; cursor: pointer; user-select: none;
+  }
+  .toggle-wrap input[type="checkbox"] { display: none; }
+  .toggle-track {
+    width: 40px; height: 22px; background: rgba(255,255,255,0.08);
+    border: 1px solid rgba(255,255,255,0.15); border-radius: 11px;
+    position: relative; transition: background 0.2s, border-color 0.2s; flex-shrink: 0;
+  }
+  .toggle-thumb {
+    position: absolute; top: 2px; left: 2px;
+    width: 16px; height: 16px; background: var(--stone-light);
+    border-radius: 50%; transition: transform 0.2s, background 0.2s;
+  }
+  .toggle-wrap input:checked + .toggle-track { background: rgba(139,26,26,0.4); border-color: #8b1a1a; }
+  .toggle-wrap input:checked + .toggle-track .toggle-thumb { transform: translateX(18px); background: #e05050; }
+  .toggle-label { font-family: 'Cinzel', serif; font-size: 0.78rem; color: var(--parchment-dim); letter-spacing: 0.08em; }
 </style>
 </head>
 <body>
@@ -389,6 +408,16 @@
         <button class="troop-btn" onclick="adj('def',1)">+</button>
       </div>
       <div class="troop-note">Defending territory</div>
+    </div>
+
+    <div class="input-group">
+      <label>Stronghold</label>
+      <label class="toggle-wrap">
+        <input type="checkbox" id="stronghold">
+        <span class="toggle-track"><span class="toggle-thumb"></span></span>
+        <span class="toggle-label" id="strongholdLabel">Off</span>
+      </label>
+      <div class="troop-note">+1 to defender's highest die (max 6)</div>
     </div>
   </div>
 </div>
@@ -495,48 +524,84 @@
 </div>
 
 <script>
-// ─── EXACT PER-ROUND PROBABILITIES ───────────────────────────────────────────
-// Source: standard Risk dice combinatorics (confirmed values)
-// 3v2: atk loses 2 = 2890/7776, each loses 1 = 2611/7776, def loses 2 = 2275/7776
-// 3v1: atk loses 1 = 441/1296, def loses 1 = 855/1296
-// 2v2: atk loses 2 = 581/1296, each loses 1 = 420/1296, def loses 2 = 295/1296
-// 2v1: atk loses 1 = 91/216, def loses 1 = 125/216
-// 1v2: atk loses 1 = 55/216, def loses 1 = 161/216  (only 1 die compared)
-// 1v1: atk loses 1 = 15/36, def loses 1 = 21/36
+// ─── PER-ROUND PROBABILITIES ─────────────────────────────────────────────────
+// Standard values (exact fractions):
+ const STANDARD_ROUNDS = {
+  '3_2': [{ da:2,dd:0,p:2890/7776 },{ da:1,dd:1,p:2611/7776 },{ da:0,dd:2,p:2275/7776 }],
+  '3_1': [{ da:1,dd:0,p:441/1296  },{ da:0,dd:1,p:855/1296  }],
+  '2_2': [{ da:2,dd:0,p:581/1296  },{ da:1,dd:1,p:420/1296  },{ da:0,dd:2,p:295/1296  }],
+  '2_1': [{ da:1,dd:0,p:91/216    },{ da:0,dd:1,p:125/216   }],
+  '1_2': [{ da:1,dd:0,p:55/216    },{ da:0,dd:1,p:161/216   }],
+  '1_1': [{ da:1,dd:0,p:15/36     },{ da:0,dd:1,p:21/36     }],
+};
 
-// For each state (a = attacker armies fighting, d = defender armies):
-// Returns array of {da, dd, p} = {attacker loss, defender loss, probability}
-function roundOutcomes(a, d) {
+// Stronghold: brute-force the round probabilities with +1 (capped at 6) on defender's highest die.
+// Returns same format: array of {da, dd, p}
+function computeStrongholdRound(atkDice, defDice) {
+  // Enumerate all atk die combos and def die combos
+  // atk rolls atkDice d6, def rolls defDice d6 with highest bumped +1 (cap 6)
+  const counts = { '2_0': 0, '1_1': 0, '0_2': 0, '1_0': 0, '0_1': 0 };
+  const total = Math.pow(6, atkDice) * Math.pow(6, defDice);
+  const comparisons = Math.min(atkDice, defDice);
+
+  // Generate all combos
+  function* combos(n) {
+    if (n === 1) { for (let i=1;i<=6;i++) yield [i]; return; }
+    for (const rest of combos(n-1)) for (let i=1;i<=6;i++) yield [...rest, i];
+  }
+
+  let da2=0, da1dd1=0, dd2=0, da1=0, dd1=0;
+
+  for (const av of combos(atkDice)) {
+    for (const dv of combos(defDice)) {
+      // Apply stronghold: bump highest defender die by 1, cap at 6
+      const dvMod = [...dv].sort((a,b)=>b-a);
+      dvMod[0] = Math.min(6, dvMod[0] + 1);
+
+      const atkSorted = [...av].sort((a,b)=>b-a);
+      const defSorted = dvMod.sort((a,b)=>b-a);
+
+      let da=0, dd=0;
+      for (let i=0; i<comparisons; i++) {
+        if (atkSorted[i] > defSorted[i]) dd++; // atk wins tie goes to def
+        else da++;
+      }
+
+      if (comparisons === 2) {
+        if      (da===2) da2++;
+        else if (da===1) da1dd1++;
+        else             dd2++;
+      } else {
+        if (da===1) da1++;
+        else        dd1++;
+      }
+    }
+  }
+
+  if (comparisons === 2) return [
+    { da:2, dd:0, p: da2/total },
+    { da:1, dd:1, p: da1dd1/total },
+    { da:0, dd:2, p: dd2/total },
+  ];
+  return [
+    { da:1, dd:0, p: da1/total },
+    { da:0, dd:1, p: dd1/total },
+  ];
+}
+
+// Cache stronghold round results
+const STRONGHOLD_ROUNDS = {};
+function getStrongholdRound(atkDice, defDice) {
+  const k = `${atkDice}_${defDice}`;
+  if (!STRONGHOLD_ROUNDS[k]) STRONGHOLD_ROUNDS[k] = computeStrongholdRound(atkDice, defDice);
+  return STRONGHOLD_ROUNDS[k];
+}
+
+function roundOutcomes(a, d, stronghold) {
   const atkDice = Math.min(a, 3);
   const defDice = Math.min(d, 2);
-
-  if (atkDice === 3 && defDice === 2) return [
-    { da: 2, dd: 0, p: 2890/7776 },
-    { da: 1, dd: 1, p: 2611/7776 },
-    { da: 0, dd: 2, p: 2275/7776 },
-  ];
-  if (atkDice === 3 && defDice === 1) return [
-    { da: 1, dd: 0, p: 441/1296 },
-    { da: 0, dd: 1, p: 855/1296 },
-  ];
-  if (atkDice === 2 && defDice === 2) return [
-    { da: 2, dd: 0, p: 581/1296 },
-    { da: 1, dd: 1, p: 420/1296 },
-    { da: 0, dd: 2, p: 295/1296 },
-  ];
-  if (atkDice === 2 && defDice === 1) return [
-    { da: 1, dd: 0, p: 91/216 },
-    { da: 0, dd: 1, p: 125/216 },
-  ];
-  if (atkDice === 1 && defDice === 2) return [
-    { da: 1, dd: 0, p: 55/216 },
-    { da: 0, dd: 1, p: 161/216 },
-  ];
-  // 1v1
-  return [
-    { da: 1, dd: 0, p: 15/36 },
-    { da: 0, dd: 1, p: 21/36 },
-  ];
+  if (stronghold) return getStrongholdRound(atkDice, defDice);
+  return STANDARD_ROUNDS[`${atkDice}_${defDice}`];
 }
 
 // ─── FULL BATTLE DP ──────────────────────────────────────────────────────────
@@ -550,7 +615,7 @@ function roundOutcomes(a, d) {
 //   atkLeftDist[k] = P(attacker wins AND has exactly k armies left fighting)
 //   defLeftDist[k] = P(defender holds AND has exactly k armies left)
 
-function computeBattle(atkFighting, defTotal, stopAt) {
+function computeBattle(atkFighting, defTotal, stopAt, stronghold) {
   const K = 401;
   let states = new Map();
   states.set(atkFighting * K + defTotal, 1.0);
@@ -567,7 +632,7 @@ function computeBattle(atkFighting, defTotal, stopAt) {
     for (const [sk, p] of states) {
       const a = Math.floor(sk / K);
       const d = sk % K;
-      for (const { da, dd, p: rp } of roundOutcomes(a, d)) {
+      for (const { da, dd, p: rp } of roundOutcomes(a, d, stronghold)) {
         const np = p * rp;
         if (np < 1e-14) continue;
         const na = Math.max(a - da, 0);
@@ -619,9 +684,10 @@ function riskRating(atkWin) {
 
 // ─── MAIN ────────────────────────────────────────────────────────────────────
 function calculate() {
-  const atkTotal = clamp(+document.getElementById('atk').value, 2, 400);
-  const defTotal = clamp(+document.getElementById('def').value, 1, 400);
-  const stopAt   = clamp(+document.getElementById('stop').value, 1, atkTotal - 1);
+  const atkTotal    = clamp(+document.getElementById('atk').value, 2, 400);
+  const defTotal    = clamp(+document.getElementById('def').value, 1, 400);
+  const stopAt      = clamp(+document.getElementById('stop').value, 1, atkTotal - 1);
+  const stronghold  = document.getElementById('stronghold').checked;
 
   const atkFighting = atkTotal - 1; // keep 1 behind
 
@@ -632,7 +698,7 @@ function calculate() {
   setTimeout(() => {
     try {
       const { atkWin, defWin, atkLeftDist, defLeftDist, atkStoppedDist } =
-        computeBattle(atkFighting, defTotal, stopAt);
+        computeBattle(atkFighting, defTotal, stopAt, stronghold);
 
       _lastBattle = { atkLeftDist, defLeftDist, atkStoppedDist, atkFighting, defTotal, atkTotal, stopAt };
       render({ atkWin, defWin, atkLeftDist, defLeftDist, atkStoppedDist, atkFighting, defTotal, atkTotal, stopAt });
@@ -859,6 +925,11 @@ function adj(id, delta) {
   const mx = parseInt(el.max) || 400;
   el.value = clamp((parseInt(el.value) || mn) + delta, mn, mx);
 }
+
+// Stronghold toggle label
+document.getElementById('stronghold').addEventListener('change', function() {
+  document.getElementById('strongholdLabel').textContent = this.checked ? 'On' : 'Off';
+});
 
 // Run on load
 window.addEventListener('load', () => setTimeout(calculate, 200));
