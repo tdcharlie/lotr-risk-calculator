@@ -202,6 +202,19 @@
   .btn-calculate:active { transform: translateY(0); }
   .btn-calculate:disabled { opacity: 0.6; cursor: default; transform: none; }
 
+  .btn-roll {
+    font-family: 'Cinzel Decorative', serif;
+    font-size: 1rem; font-weight: 700; letter-spacing: 0.1em;
+    color: var(--parchment);
+    background: linear-gradient(135deg, #3a2a0a 0%, #1a1206 100%);
+    border: 1px solid var(--gold-dim); padding: 15px 40px; cursor: pointer; border-radius: 3px;
+    box-shadow: 0 0 0 1px rgba(201,168,76,0.2), 0 4px 20px #00000066;
+    transition: all 0.18s;
+  }
+  .btn-roll:hover { border-color: var(--gold); box-shadow: 0 0 0 1px var(--gold), 0 6px 24px #c9a84c33; transform: translateY(-2px); }
+  .btn-roll:active { transform: translateY(0); }
+  .btn-roll:disabled { opacity: 0.5; cursor: default; transform: none; }
+
   /* RESULTS */
   .results { display: none; }
   .results.visible { display: block; animation: fadeUp 0.35s ease both; }
@@ -380,8 +393,9 @@
   </div>
 </div>
 
-<div class="btn-row">
+<div class="btn-row" style="gap:14px;flex-wrap:wrap">
   <button class="btn-calculate" id="calcBtn" onclick="calculate()">⚔ &nbsp;Calculate Odds</button>
+  <button class="btn-roll" id="rollBtn" onclick="rollOutcome()" style="display:none">🎲 &nbsp;Roll the Battle</button>
 </div>
 
 <!-- RESULTS -->
@@ -390,6 +404,16 @@
   <div class="verdict-wrap">
     <div class="verdict" id="verdictText"></div>
     <div class="verdict-sub" id="verdictSub"></div>
+  </div>
+
+  <!-- ROLL RESULT -->
+  <div id="rollResult" style="display:none;margin-bottom:20px">
+    <div class="section-panel" style="border-color:#555;text-align:center">
+      <div class="section-title" style="justify-content:center">Battle Result</div>
+      <div id="rollOutcomeText" style="font-family:'Cinzel Decorative',serif;font-size:1.3rem;font-weight:900;margin-bottom:8px"></div>
+      <div id="rollDetail" style="font-family:'Cinzel',serif;font-size:0.85rem;color:var(--parchment-dim);letter-spacing:0.06em"></div>
+      <div id="rollSub" style="font-family:'Cinzel',serif;font-size:0.7rem;color:var(--stone-light);margin-top:6px;letter-spacing:0.1em;text-transform:uppercase"></div>
+    </div>
   </div>
 
   <div class="section-panel">
@@ -610,7 +634,10 @@ function calculate() {
       const { atkWin, defWin, atkLeftDist, defLeftDist, atkStoppedDist } =
         computeBattle(atkFighting, defTotal, stopAt);
 
+      _lastBattle = { atkLeftDist, defLeftDist, atkStoppedDist, atkFighting, defTotal, atkTotal, stopAt };
       render({ atkWin, defWin, atkLeftDist, defLeftDist, atkStoppedDist, atkFighting, defTotal, atkTotal, stopAt });
+      document.getElementById('rollBtn').style.display = 'inline-flex';
+      document.getElementById('rollResult').style.display = 'none';
     } catch(e) {
       alert('Computation error — try smaller numbers (max ~200 per side). ' + e.message);
     }
@@ -731,6 +758,96 @@ function buildChart(atkLeftDist, defLeftDist, atkFighting, defTotal) {
       el.style.transition = `height 0.5s cubic-bezier(0.16,1,0.3,1) ${i * 6}ms`;
     }, 80);
   });
+}
+
+// ─── LAST COMPUTED STATE (for roll button) ───────────────────────────────────
+let _lastBattle = null;
+
+// ─── ROLL A SINGLE OUTCOME from the distribution ─────────────────────────────
+function rollOutcome() {
+  if (!_lastBattle) return;
+  const { atkLeftDist, defLeftDist, atkStoppedDist, atkFighting, defTotal, atkTotal } = _lastBattle;
+
+  // Build cumulative distribution over all possible outcomes:
+  // Each outcome = { label, atkKilled, defKilled, winner }
+  const outcomes = [];
+
+  // Attacker wins outcomes: atkLeftDist[k] = P(atk wins, k fighting armies left)
+  for (let k = 0; k <= atkFighting; k++) {
+    if (atkLeftDist[k] < 1e-10) continue;
+    outcomes.push({
+      p: atkLeftDist[k],
+      winner: 'atk',
+      atkLeft: k + 1,       // +1 for kept army
+      defLeft: 0,
+      atkKilled: atkTotal - (k + 1),
+      defKilled: defTotal,
+    });
+  }
+
+  // Defender holds outcomes: atkStoppedDist[k] paired with defLeftDist
+  // We only have marginal distributions, not joint, so sample independently:
+  // Pick a def-holds atk-remaining from atkStoppedDist, and a def-remaining from defLeftDist
+  // (they're correlated in reality but marginals are a fine approximation for the roll)
+  // Actually — use a single random float to pick from the full joint ordering:
+  // order: sort def-holds outcomes by (nd, na) — we use defLeftDist x atkStoppedDist marginals
+  for (let d = 1; d <= defTotal; d++) {
+    if (defLeftDist[d] < 1e-10) continue;
+    for (let k = 0; k <= atkFighting; k++) {
+      if (atkStoppedDist[k] < 1e-10) continue;
+      // Joint probability approximation: P(d,k) ≈ P(d) * P(k) / P(def holds)
+      const defWin = defLeftDist.reduce((s,v)=>s+v,0);
+      const jointP = defWin > 0 ? (defLeftDist[d] * atkStoppedDist[k]) / defWin : 0;
+      if (jointP < 1e-12) continue;
+      outcomes.push({
+        p: jointP,
+        winner: 'def',
+        atkLeft: k + 1,
+        defLeft: d,
+        atkKilled: atkTotal - (k + 1),
+        defKilled: defTotal - d,
+      });
+    }
+  }
+
+  // Normalize (should already sum to ~1)
+  const total = outcomes.reduce((s, o) => s + o.p, 0);
+  if (total < 0.01) return;
+
+  // Pick one outcome with Math.random()
+  let r = Math.random() * total;
+  let chosen = outcomes[outcomes.length - 1];
+  for (const o of outcomes) {
+    r -= o.p;
+    if (r <= 0) { chosen = o; break; }
+  }
+
+  // Display
+  const rollResult = document.getElementById('rollResult');
+  const rollText   = document.getElementById('rollOutcomeText');
+  const rollDetail = document.getElementById('rollDetail');
+  const rollSub    = document.getElementById('rollSub');
+
+  rollResult.style.display = 'block';
+
+  if (chosen.winner === 'atk') {
+    rollText.textContent = '⚔ Fellowship Conquers!';
+    rollText.style.color = 'var(--gold-light)';
+    rollDetail.textContent =
+      `${chosen.defKilled} defender${chosen.defKilled !== 1 ? 's' : ''} killed · ${chosen.atkKilled} attacker${chosen.atkKilled !== 1 ? 's' : ''} lost · ${chosen.atkLeft} armies remain`;
+    rollSub.textContent = 'Territory captured';
+  } else {
+    rollText.textContent = '🗡 Mordor Holds!';
+    rollText.style.color = '#f08080';
+    rollDetail.textContent =
+      `${chosen.defKilled} defender${chosen.defKilled !== 1 ? 's' : ''} killed · ${chosen.atkKilled} attacker${chosen.atkKilled !== 1 ? 's' : ''} lost · ${chosen.defLeft} defender${chosen.defLeft !== 1 ? 's' : ''} remain`;
+    rollSub.textContent = 'Territory defended';
+  }
+
+  // Animate
+  rollResult.style.animation = 'none';
+  void rollResult.offsetWidth;
+  rollResult.style.animation = 'fadeUp 0.3s ease both';
 }
 
 // ─── UI UTILS ────────────────────────────────────────────────────────────────
