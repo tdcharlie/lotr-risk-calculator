@@ -564,10 +564,13 @@ function computeBattle(atkFighting, defTotal, stopAt) {
 function pct(v) { return (v * 100).toFixed(1) + '%'; }
 function pctN(v) { return (v * 100).toFixed(1); }
 
-function weightedAvg(dist) {
+function weightedAvg(dist, offset) {
+  // offset: add to k when computing the mean (e.g. +1 for the army kept behind)
+  offset = offset || 0;
   let sum = 0, w = 0;
   for (let k = 0; k < dist.length; k++) {
-    sum += k * dist[k];
+    if (dist[k] < 1e-10) continue;
+    sum += (k + offset) * dist[k];
     w   += dist[k];
   }
   return w > 1e-6 ? (sum / w).toFixed(1) : '—';
@@ -636,8 +639,9 @@ function render({ atkWin, defWin, atkLeftDist, defLeftDist, atkFighting, defTota
   }, 50);
 
   // Stats
-  document.getElementById('statAtkLeft').textContent = weightedAvg(atkLeftDist);
-  document.getElementById('statDefLeft').textContent = weightedAvg(defLeftDist);
+  // +1 for attacker: fighting armies + the 1 kept behind
+  document.getElementById('statAtkLeft').textContent = weightedAvg(atkLeftDist, 1);
+  document.getElementById('statDefLeft').textContent = weightedAvg(defLeftDist, 0);
   document.getElementById('statAtkWin').textContent  = pct(atkWin);
   document.getElementById('statDefWin').textContent  = pct(defWin);
 
