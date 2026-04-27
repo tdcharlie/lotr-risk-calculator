@@ -447,11 +447,11 @@
     </div>
     <div class="stat-card gold">
       <span class="stat-value" id="statDefKilled">—</span>
-      <span class="stat-label">Avg Defenders<br>Killed</span>
+      <span class="stat-label">Expected Defenders<br>Killed</span>
     </div>
     <div class="stat-card red">
       <span class="stat-value" id="statAtkKilled">—</span>
-      <span class="stat-label">Avg Attackers<br>Killed</span>
+      <span class="stat-label">Expected Attackers<br>Killed</span>
     </div>
   </div>
   <div class="stats-grid" style="margin-top:-6px">
@@ -698,10 +698,10 @@ function render({ atkWin, defWin, atkLeftDist, defLeftDist, atkStoppedDist, atkF
   const expDefKilled = defTotal  - expDefRemain;
   const expAtkKilled = atkTotal  - expAtkRemain; // atkTotal includes the kept army
 
-  document.getElementById('statDefKilled').textContent = expDefKilled.toFixed(1);
-  document.getElementById('statAtkKilled').textContent = expAtkKilled.toFixed(1);
-  document.getElementById('statAtkLeftAll').textContent = expAtkRemain.toFixed(1);
-  document.getElementById('statDefLeftAll').textContent = expDefRemain.toFixed(1);
+  document.getElementById('statDefKilled').textContent = Math.round(expDefKilled);
+  document.getElementById('statAtkKilled').textContent = Math.round(expAtkKilled);
+  document.getElementById('statAtkLeftAll').textContent = Math.round(expAtkRemain);
+  document.getElementById('statDefLeftAll').textContent = Math.round(expDefRemain);
   document.getElementById('statAtkWin').textContent = pct(atkWin);
   document.getElementById('statDefWin').textContent = pct(defWin);
 
