@@ -414,20 +414,38 @@
 
   <div class="stats-grid">
     <div class="stat-card gold">
-      <span class="stat-value" id="statAtkLeft">—</span>
-      <span class="stat-label">Avg Armies Left<br>(Attacker Wins)</span>
-    </div>
-    <div class="stat-card red">
-      <span class="stat-value" id="statDefLeft">—</span>
-      <span class="stat-label">Avg Armies Left<br>(Defender Holds)</span>
-    </div>
-    <div class="stat-card dim">
       <span class="stat-value" id="statAtkWin">—</span>
       <span class="stat-label">Attacker<br>Win Chance</span>
     </div>
-    <div class="stat-card dim">
+    <div class="stat-card red">
       <span class="stat-value" id="statDefWin">—</span>
       <span class="stat-label">Defender<br>Hold Chance</span>
+    </div>
+    <div class="stat-card gold">
+      <span class="stat-value" id="statDefKilled">—</span>
+      <span class="stat-label">Avg Defenders<br>Killed</span>
+    </div>
+    <div class="stat-card red">
+      <span class="stat-value" id="statAtkKilled">—</span>
+      <span class="stat-label">Avg Attackers<br>Killed</span>
+    </div>
+  </div>
+  <div class="stats-grid" style="margin-top:-6px">
+    <div class="stat-card dim">
+      <span class="stat-value" id="statAtkLeft">—</span>
+      <span class="stat-label">Avg Attacker<br>Armies Left (Win)</span>
+    </div>
+    <div class="stat-card dim">
+      <span class="stat-value" id="statDefLeft">—</span>
+      <span class="stat-label">Avg Defender<br>Armies Left (Hold)</span>
+    </div>
+    <div class="stat-card dim">
+      <span class="stat-value" id="statAtkLeftAll">—</span>
+      <span class="stat-label">Avg Attacker<br>Armies Left (Any)</span>
+    </div>
+    <div class="stat-card dim">
+      <span class="stat-value" id="statDefLeftAll">—</span>
+      <span class="stat-label">Avg Defender<br>Armies Left (Any)</span>
     </div>
   </div>
 
@@ -509,55 +527,44 @@ function roundOutcomes(a, d) {
 //   defLeftDist[k] = P(defender holds AND has exactly k armies left)
 
 function computeBattle(atkFighting, defTotal, stopAt) {
-  // State: Map<key, probability>  key = a * 1000 + d
-  // (a = atk armies still fighting, d = def armies remaining)
-  // Max armies 400 each, so key = a * 401 + d
   const K = 401;
   let states = new Map();
   states.set(atkFighting * K + defTotal, 1.0);
 
-  // Output distributions
-  // atkLeftDist[k] = prob atk wins with k armies remaining
-  // defLeftDist[k] = prob def holds with k armies remaining
-  const atkLeftDist = new Float64Array(atkFighting + 1);
-  const defLeftDist = new Float64Array(defTotal + 1);
+  // atkLeftDist[k]     = P(atk WINS with k fighting armies remaining)
+  // defLeftDist[k]     = P(def HOLDS with k defender armies remaining)
+  // atkStoppedDist[k]  = P(def HOLDS with k atk fighting armies remaining)
+  const atkLeftDist    = new Float64Array(atkFighting + 1);
+  const defLeftDist    = new Float64Array(defTotal + 1);
+  const atkStoppedDist = new Float64Array(atkFighting + 1);
 
   while (states.size > 0) {
     const next = new Map();
-
     for (const [sk, p] of states) {
       const a = Math.floor(sk / K);
       const d = sk % K;
-      const outcomes = roundOutcomes(a, d);
-
-      for (const { da, dd, p: rp } of outcomes) {
+      for (const { da, dd, p: rp } of roundOutcomes(a, d)) {
         const np = p * rp;
         if (np < 1e-14) continue;
-
-        const na = a - da;
-        const nd = d - dd;
-
+        const na = Math.max(a - da, 0);
+        const nd = Math.max(d - dd, 0);
         if (nd <= 0) {
-          // Attacker wins — record how many fighting armies remain
-          const rem = Math.max(na, 0);
-          atkLeftDist[Math.min(rem, atkFighting)] += np;
+          atkLeftDist[Math.min(na, atkFighting)] += np;
         } else if (na <= stopAt) {
-          // Defender holds — record how many defender armies remain
-          defLeftDist[Math.min(nd, defTotal)] += np;
+          defLeftDist[Math.min(nd, defTotal)]    += np;
+          atkStoppedDist[Math.min(na, atkFighting)] += np;
         } else {
           const nk = na * K + nd;
           next.set(nk, (next.get(nk) || 0) + np);
         }
       }
     }
-
     states = next;
   }
 
   const atkWin = atkLeftDist.reduce((s, v) => s + v, 0);
   const defWin = defLeftDist.reduce((s, v) => s + v, 0);
-
-  return { atkWin, defWin, atkLeftDist, defLeftDist };
+  return { atkWin, defWin, atkLeftDist, defLeftDist, atkStoppedDist };
 }
 
 // ─── HELPERS ─────────────────────────────────────────────────────────────────
@@ -600,10 +607,10 @@ function calculate() {
 
   setTimeout(() => {
     try {
-      const { atkWin, defWin, atkLeftDist, defLeftDist } =
+      const { atkWin, defWin, atkLeftDist, defLeftDist, atkStoppedDist } =
         computeBattle(atkFighting, defTotal, stopAt);
 
-      render({ atkWin, defWin, atkLeftDist, defLeftDist, atkFighting, defTotal });
+      render({ atkWin, defWin, atkLeftDist, defLeftDist, atkStoppedDist, atkFighting, defTotal, atkTotal, stopAt });
     } catch(e) {
       alert('Computation error — try smaller numbers (max ~200 per side). ' + e.message);
     }
@@ -612,7 +619,7 @@ function calculate() {
   }, 20);
 }
 
-function render({ atkWin, defWin, atkLeftDist, defLeftDist, atkFighting, defTotal }) {
+function render({ atkWin, defWin, atkLeftDist, defLeftDist, atkStoppedDist, atkFighting, defTotal, atkTotal, stopAt }) {
   // Verdict
   const vEl  = document.getElementById('verdictText');
   const vSub = document.getElementById('verdictSub');
@@ -638,12 +645,38 @@ function render({ atkWin, defWin, atkLeftDist, defLeftDist, atkFighting, defTota
     document.getElementById('defBar').style.width = pctN(defWin) + '%';
   }, 50);
 
-  // Stats
-  // +1 for attacker: fighting armies + the 1 kept behind
+  // Win-conditional averages (+1 for the army kept behind)
   document.getElementById('statAtkLeft').textContent = weightedAvg(atkLeftDist, 1);
   document.getElementById('statDefLeft').textContent = weightedAvg(defLeftDist, 0);
-  document.getElementById('statAtkWin').textContent  = pct(atkWin);
-  document.getElementById('statDefWin').textContent  = pct(defWin);
+
+  // ── Expected casualties across ALL outcomes ──────────────────────────────
+  // When atk wins: all defenders killed, atk has (k+1) remaining
+  // When def holds: atkStoppedDist tells us exactly how many atk fighting armies remained
+  let expDefRemain = 0, expAtkRemain = 0;
+
+  for (let k = 0; k <= atkFighting; k++) {
+    // Atk wins with k fighting armies left → 0 defenders remain, k+1 atk remain
+    expDefRemain += 0;                         // all defenders dead
+    expAtkRemain += (k + 1) * atkLeftDist[k]; // +1 for kept army
+  }
+  for (let k = 0; k <= atkFighting; k++) {
+    // Def holds: atk stopped with k fighting armies → k+1 atk remain
+    expAtkRemain += (k + 1) * atkStoppedDist[k];
+  }
+  for (let k = 0; k <= defTotal; k++) {
+    // Def holds: k defenders remain
+    expDefRemain += k * defLeftDist[k];
+  }
+
+  const expDefKilled = defTotal  - expDefRemain;
+  const expAtkKilled = atkTotal  - expAtkRemain; // atkTotal includes the kept army
+
+  document.getElementById('statDefKilled').textContent = expDefKilled.toFixed(1);
+  document.getElementById('statAtkKilled').textContent = expAtkKilled.toFixed(1);
+  document.getElementById('statAtkLeftAll').textContent = expAtkRemain.toFixed(1);
+  document.getElementById('statDefLeftAll').textContent = expDefRemain.toFixed(1);
+  document.getElementById('statAtkWin').textContent = pct(atkWin);
+  document.getElementById('statDefWin').textContent = pct(defWin);
 
   // Badge
   const r = riskRating(atkWin);
